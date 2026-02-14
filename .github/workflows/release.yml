@@ -1,0 +1,15 @@
+# This workflow is for internal use only. It is triggered when a pull request is closed.
+# It is used to create a GitHub release.
+
+name: Create Release
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    uses: ./.github/workflows/create-gh-release.yml

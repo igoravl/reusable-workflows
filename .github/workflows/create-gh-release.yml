@@ -1,0 +1,119 @@
+name: Create GitHub Release on Merged PR
+
+on:
+  workflow_call:
+    inputs:
+      release_notes:
+        description: 'The release notes for the new version.'
+        required: false
+        type: string
+        default: ''
+      version:
+        description: 'The version number for the new release.'
+        required: false
+        type: string
+        default: ''
+      draft:
+        description: 'Whether or not the release should be a draft'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  release:
+    if: ${{ github.event.pull_request.merged == true }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Generate the version based on the merged PR
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@v4.2.0
+      - name: Generate GitVersion.yml
+        shell: pwsh
+        run: |
+          @'
+          assembly-versioning-scheme: MajorMinorPatch
+          assembly-file-versioning-scheme: MajorMinorPatch
+          tag-prefix: '[vV]?'
+          version-in-branch-pattern: (?<version>[vV]?\d+(\.\d+)?(\.\d+)?).*
+          major-version-bump-message: \+semver:\s?(breaking|major)
+          minor-version-bump-message: \+semver:\s?(feature|minor)
+          patch-version-bump-message: \+semver:\s?(fix|patch)
+          no-bump-message: \+semver:\s?(none|skip)
+          tag-pre-release-weight: 60000
+          commit-date-format: yyyy-MM-dd
+          merge-message-formats: {}
+          update-build-number: true
+          semantic-version-format: Strict
+          strategies:
+          - ConfiguredNextVersion
+          - Mainline
+          branches:
+            main:
+              mode: ContinuousDeployment
+              label: ''
+              increment: Patch
+              prevent-increment:
+                of-merged-branch: false
+              track-merge-target: false
+              track-merge-message: true
+              regex: ^master$|^main$
+              source-branches: []
+              is-source-branch-for: []
+              tracks-release-branches: false
+              is-release-branch: false
+              is-main-branch: true
+              pre-release-weight: 55000
+          ignore:
+            sha: []
+            paths: []
+          mode: ContinuousDelivery
+          label: '{BranchName}'
+          increment: Inherit
+          prevent-increment:
+            of-merged-branch: false
+            when-branch-merged: false
+            when-current-commit-tagged: true
+          track-merge-target: false
+          track-merge-message: true
+          commit-message-incrementing: Enabled
+          regex: ''
+          source-branches: []
+          is-source-branch-for: []
+          tracks-release-branches: false
+          is-release-branch: false
+          is-main-branch: false
+          '@ | Out-File "$env:GITHUB_WORKSPACE/GitVersion.yml" -Encoding utf8
+      - name: Execute GitVersion
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@v4.2.0
+        with:
+          configFilePath: "${{ github.workspace }}/GitVersion.yml"
+
+      # Get the version and update the tags to use in the release
+      - name: Tag Commit
+        id: tag-commit
+        uses: issue-ops/semver@v2
+        with:
+          use-version: ${{ inputs.version || steps.gitversion.outputs.semVer }}
+          workspace: ${{ github.workspace }}
+          ref: main
+
+      # Use the version output from the previous step for the release
+      # Prepends a 'v' to the beginning (e.g. 'v1.2.3')
+      - name: Create Release
+        id: create-release
+        uses: issue-ops/releaser@v2
+        with:
+          name: Version ${{ steps.tag-commit.outputs.version }}
+          tag: v${{ steps.tag-commit.outputs.version }}
+          generate_release_notes: true
+          draft: ${{ inputs.draft }}
+          notes: |
+            ${{ inputs.release_notes || github.event.pull_request.body }}
